@@ -38,6 +38,12 @@ namespace UB
     {
         public:
             
+            enum class Mode
+            {
+                Standard,
+                Interactive
+            };
+            
             UI( Engine & engine );
             UI( const UI & o );
             UI( UI && o ) noexcept;
@@ -45,8 +51,11 @@ namespace UB
             
             UI & operator =( UI o );
             
+            Mode mode( void ) const;
+            void mode( Mode mode );
+            
             void run( void );
-            void waitForUserResume( void );
+            int  waitForUserResume( void );
             
             StringStream & output( void );
             StringStream & debug( void );

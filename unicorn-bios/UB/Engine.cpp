@@ -29,11 +29,13 @@
 
 #include "UB/Engine.hpp"
 #include "UB/String.hpp"
+#include "UB/Casts.hpp"
 #include <unicorn/unicorn.h>
 #include <map>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <limits>
 
 namespace UB
 {
@@ -44,19 +46,31 @@ namespace UB
             IMPL( size_t memory );
             ~IMPL( void );
             
-            static void _handleInterrupt( uc_engine * uc, uint32_t i, void * data );
+            static void _handleInterrupt(   uc_engine * uc, uint32_t i, void * data );
+            static void _handleInstruction( uc_engine * uc, uint64_t address, uint32_t size, void * data );
+            static bool _handleInvalidMemoryAccess( uc_engine * uc, uc_mem_type type, uint64_t address, int size, int64_t value, void * data );
+            static void _handleValidMemoryAccess( uc_engine * uc, uc_mem_type type, uint64_t address, int size, int64_t value, void * data );
             
             std::vector< uint8_t > _read( size_t address, size_t size );
-            void                   _write( size_t address, const std::vector< uint8_t > & bytes );
+            void                   _write( size_t address, const uint8_t * bytes, size_t size );
             
-            size_t                                                       _memory;
-            std::vector< std::function< void( void ) > >                 _onStart;
-            std::vector< std::function< void( void ) > >                 _onStop;
-            std::vector< std::function< bool( uint32_t i, Engine & ) > > _interrupts;
-            uc_engine                                                  * _uc;
-            bool                                                         _running;
-            mutable std::recursive_mutex                                 _rmtx;
-            std::condition_variable_any                                  _cv;
+            size_t                       _memory;
+            Registers                    _registers;
+            uint64_t                     _lastInstructionAddress;
+            std::vector< uint8_t >       _lastInstruction;
+            uc_engine                  * _uc;
+            bool                         _running;
+            mutable std::recursive_mutex _rmtx;
+            std::condition_variable_any  _cv;
+            
+            std::vector< std::function< void( void ) > >                                                        _onStart;
+            std::vector< std::function< void( void ) > >                                                        _onStop;
+            std::vector< std::function< bool( uint32_t ) > >                                                    _interruptHandlers;
+            std::vector< std::function< bool( const std::exception & ) > >                                      _exceptionHandlers;
+            std::vector< std::function< void( uint64_t, size_t ) > >                                            _invalidMemoryHandlers;
+            std::vector< std::function< void( uint64_t, size_t ) > >                                            _validMemoryHandlers;
+            std::vector< std::function< void( uint64_t, const std::vector< uint8_t > & ) > >                    _beforeInstructionHandlers;
+            std::vector< std::function< void( uint64_t, const Registers &, const std::vector< uint8_t > & ) > > _afterInstructionHandlers;
             
             template< typename _T_ >
             _T_ _readRegister( int reg ) const
@@ -86,13 +100,41 @@ namespace UB
             }
     };
     
+    uint64_t Engine::getAddress( uint16_t segment, uint16_t offset )
+    {
+        uint64_t address( segment );
+        
+        address <<= 4;
+        address  += offset;
+        
+        return address;
+    }
+    
     Engine::Engine( size_t memory ):
         impl( std::make_unique< IMPL >( memory ) )
     {
-        uc_hook h;
+        uc_hook h1;
+        uc_hook h2;
+        uc_hook h3;
+        uc_hook h4;
         uc_err  e;
         
-        if( ( e = uc_hook_add( this->impl->_uc, &h, UC_HOOK_INTR, reinterpret_cast< void * >( &IMPL::_handleInterrupt ), this, 1, 0 ) ) != UC_ERR_OK )
+        if( ( e = uc_hook_add( this->impl->_uc, &h1, UC_HOOK_INTR, reinterpret_cast< void * >( &IMPL::_handleInterrupt ), this, 0, std::numeric_limits< uint64_t >::max() ) ) != UC_ERR_OK )
+        {
+            throw std::runtime_error( uc_strerror( e ) );
+        }
+        
+        if( ( e = uc_hook_add( this->impl->_uc, &h2, UC_HOOK_CODE, reinterpret_cast< void * >( &IMPL::_handleInstruction ), this, 0, std::numeric_limits< uint64_t >::max() ) ) != UC_ERR_OK )
+        {
+            throw std::runtime_error( uc_strerror( e ) );
+        }
+        
+        if( ( e = uc_hook_add( this->impl->_uc, &h3, UC_HOOK_MEM_INVALID, reinterpret_cast< void * >( &IMPL::_handleInvalidMemoryAccess ), this, 0, std::numeric_limits< uint64_t >::max() ) ) != UC_ERR_OK )
+        {
+            throw std::runtime_error( uc_strerror( e ) );
+        }
+        
+        if( ( e = uc_hook_add( this->impl->_uc, &h4, UC_HOOK_MEM_WRITE + UC_HOOK_MEM_FETCH, reinterpret_cast< void * >( &IMPL::_handleValidMemoryAccess ), this, 0, std::numeric_limits< uint64_t >::max() ) ) != UC_ERR_OK )
         {
             throw std::runtime_error( uc_strerror( e ) );
         }
@@ -203,19 +245,74 @@ namespace UB
         return this->impl->_readRegister< uint16_t >( UC_X86_REG_DS );
     }
     
-    uint16_t Engine::es( void ) const
-    {
-        return this->impl->_readRegister< uint16_t >( UC_X86_REG_ES );
-    }
-    
     uint16_t Engine::ss( void ) const
     {
         return this->impl->_readRegister< uint16_t >( UC_X86_REG_SS );
     }
     
+    uint16_t Engine::es( void ) const
+    {
+        return this->impl->_readRegister< uint16_t >( UC_X86_REG_ES );
+    }
+    
+    uint16_t Engine::fs( void ) const
+    {
+        return this->impl->_readRegister< uint16_t >( UC_X86_REG_FS );
+    }
+    
+    uint16_t Engine::gs( void ) const
+    {
+        return this->impl->_readRegister< uint16_t >( UC_X86_REG_GS );
+    }
+    
     uint16_t Engine::ip( void ) const
     {
         return this->impl->_readRegister< uint16_t >( UC_X86_REG_IP );
+    }
+    
+    uint32_t Engine::eax( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_EAX );
+    }
+    
+    uint32_t Engine::ebx( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_EBX );
+    }
+    
+    uint32_t Engine::ecx( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_ECX );
+    }
+    
+    uint32_t Engine::edx( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_EDX );
+    }
+    
+    uint32_t Engine::esi( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_ESI );
+    }
+    
+    uint32_t Engine::edi( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_EDI );
+    }
+    
+    uint32_t Engine::esp( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_ESP );
+    }
+    
+    uint32_t Engine::ebp( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_EBP );
+    }
+    
+    uint32_t Engine::eip( void ) const
+    {
+        return this->impl->_readRegister< uint32_t >( UC_X86_REG_EIP );
     }
     
     uint32_t Engine::eflags( void ) const
@@ -330,14 +427,24 @@ namespace UB
         this->impl->_writeRegister( UC_X86_REG_DS, value );
     }
     
+    void Engine::ss( uint16_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_SS, value );
+    }
+    
     void Engine::es( uint16_t value )
     {
         this->impl->_writeRegister( UC_X86_REG_ES, value );
     }
     
-    void Engine::ss( uint16_t value )
+    void Engine::fs( uint16_t value )
     {
-        this->impl->_writeRegister( UC_X86_REG_SS, value );
+        this->impl->_writeRegister( UC_X86_REG_FS, value );
+    }
+    
+    void Engine::gs( uint16_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_GS, value );
     }
     
     void Engine::ip( uint16_t value )
@@ -345,9 +452,61 @@ namespace UB
         this->impl->_writeRegister( UC_X86_REG_IP, value );
     }
     
+    void Engine::eax( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_EAX, value );
+    }
+    
+    void Engine::ebx( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_EBX, value );
+    }
+    
+    void Engine::ecx( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_ECX, value );
+    }
+    
+    void Engine::edx( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_EDX, value );
+    }
+    
+    void Engine::esi( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_ESI, value );
+    }
+    
+    void Engine::edi( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_EDI, value );
+    }
+    
+    void Engine::esp( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_ESP, value );
+    }
+    
+    void Engine::ebp( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_EBP, value );
+    }
+    
+    void Engine::eip( uint32_t value )
+    {
+        this->impl->_writeRegister( UC_X86_REG_EIP, value );
+    }
+    
     void Engine::eflags( uint32_t value )
     {
         this->impl->_writeRegister( UC_X86_REG_EFLAGS, value );
+    }
+    
+    Registers Engine::registers( void ) const
+    {
+        std::lock_guard< std::recursive_mutex > l( this->impl->_rmtx );
+        
+        return this->impl->_registers;
     }
     
     bool Engine::running( void ) const
@@ -371,11 +530,46 @@ namespace UB
         this->impl->_onStop.push_back( f );
     }
     
-    void Engine::onInterrupt( const std::function< bool( uint32_t i, Engine & ) > handler )
+    void Engine::onInterrupt( const std::function< bool( uint32_t ) > handler )
     {
         std::lock_guard< std::recursive_mutex > l( this->impl->_rmtx );
         
-        this->impl->_interrupts.push_back( handler );
+        this->impl->_interruptHandlers.push_back( handler );
+    }
+    
+    void Engine::onException( const std::function< bool( const std::exception & ) > handler )
+    {
+        std::lock_guard< std::recursive_mutex > l( this->impl->_rmtx );
+        
+        this->impl->_exceptionHandlers.push_back( handler );
+    }
+    
+    void Engine::onInvalidMemoryAccess( const std::function< void( uint64_t, size_t ) > handler )
+    {
+        std::lock_guard< std::recursive_mutex > l( this->impl->_rmtx );
+        
+        this->impl->_invalidMemoryHandlers.push_back( handler );
+    }
+    
+    void Engine::onValidMemoryAccess( const std::function< void( uint64_t, size_t ) > handler )
+    {
+        std::lock_guard< std::recursive_mutex > l( this->impl->_rmtx );
+        
+        this->impl->_validMemoryHandlers.push_back( handler );
+    }
+    
+    void Engine::beforeInstruction( const std::function< void( uint64_t, const std::vector< uint8_t > & ) > handler )
+    {
+        std::lock_guard< std::recursive_mutex > l( this->impl->_rmtx );
+        
+        this->impl->_beforeInstructionHandlers.push_back( handler );
+    }
+    
+    void Engine::afterInstruction( const std::function< void( uint64_t, const Registers &, const std::vector< uint8_t > & ) > handler )
+    {
+        std::lock_guard< std::recursive_mutex > l( this->impl->_rmtx );
+        
+        this->impl->_afterInstructionHandlers.push_back( handler );
     }
     
     std::vector< uint8_t > Engine::read( size_t address, size_t size )
@@ -385,7 +579,12 @@ namespace UB
     
     void Engine::write( size_t address, const std::vector< uint8_t > & bytes )
     {
-        this->impl->_write( address, bytes );
+        this->impl->_write( address, &( bytes[ 0 ] ), bytes.size() );
+    }
+    
+    void Engine::write( size_t address, const uint8_t * bytes, size_t size )
+    {
+        this->impl->_write( address, bytes, size );
     }
     
     bool Engine::start( size_t address )
@@ -412,11 +611,38 @@ namespace UB
         (
             [ = ]
             {
-                uc_err e;
-                
-                if( ( e = uc_emu_start( this->impl->_uc, address, std::numeric_limits< uint64_t >::max(), 0, 0 ) ) != UC_ERR_OK )
+                try
                 {
-                    throw std::runtime_error( uc_strerror( e ) );
+                    uc_err e;
+                    
+                    if( ( e = uc_emu_start( this->impl->_uc, address, std::numeric_limits< uint64_t >::max(), 0, 0 ) ) != UC_ERR_OK )
+                    {
+                        throw std::runtime_error( uc_strerror( e ) );
+                    }
+                }
+                catch( const std::exception & e )
+                {
+                    std::vector< std::function< bool( const std::exception & ) > > handlers;
+                    bool                                                           handled( false );
+                    
+                    {
+                        std::lock_guard< std::recursive_mutex > l( this->impl->_rmtx );
+                        
+                        handlers = this->impl->_exceptionHandlers;
+                    }
+                    
+                    for( const auto & f: handlers )
+                    {
+                        if( f( e ) )
+                        {
+                            handled = true;
+                        }
+                    }
+                    
+                    if( handled == false )
+                    {
+                        throw e;
+                    }
                 }
                 
                 {
@@ -495,8 +721,8 @@ namespace UB
     
     void Engine::IMPL::_handleInterrupt( uc_engine * uc, uint32_t i, void * data )
     {
-        Engine                                                     * engine;
-        std::vector< std::function< bool( uint32_t i, Engine & ) > > interrupts;
+        Engine                                         * engine;
+        std::vector< std::function< bool( uint32_t ) > > handlers;
         
         ( void )uc;
         
@@ -504,18 +730,18 @@ namespace UB
         
         if( engine == nullptr )
         {
-            throw std::runtime_error( "Unhandled interrupt: " + String::toHex( i ) );
+            throw std::runtime_error( "Fatal internal error: unknown engine" );
         }
         
         {
             std::lock_guard< std::recursive_mutex > l( engine->impl->_rmtx );
             
-            interrupts = engine->impl->_interrupts;
+            handlers = engine->impl->_interruptHandlers;
         }
         
-        for( const auto & f: interrupts )
+        for( const auto & f: handlers )
         {
-            if( f( i, *( engine ) ) )
+            if( f( i ) )
             {
                 return;
             }
@@ -524,10 +750,127 @@ namespace UB
         throw std::runtime_error( "Unhandled interrupt: " + String::toHex( i ) );
     }
     
+    void Engine::IMPL::_handleInstruction( uc_engine * uc, uint64_t address, uint32_t size, void * data )
+    {
+        Engine               * engine;
+        std::vector< uint8_t > last;
+        uint64_t               lastAddress;
+        Registers              lastRegisters;
+        std::vector< uint8_t > current;
+        
+        std::vector< std::function< void( uint64_t, const std::vector< uint8_t > & ) > > before;
+        std::vector< std::function< void( uint64_t, const Registers &, const std::vector< uint8_t > & ) > > after;
+        
+        ( void )uc;
+        
+        engine = static_cast< Engine * >( data );
+        
+        if( engine == nullptr )
+        {
+            throw std::runtime_error( "Fatal internal error: unknown engine" );
+        }
+        
+        {
+            std::lock_guard< std::recursive_mutex > l( engine->impl->_rmtx );
+            
+            before        = engine->impl->_beforeInstructionHandlers;
+            after         = engine->impl->_afterInstructionHandlers;
+            last          = engine->impl->_lastInstruction;
+            lastAddress   = engine->impl->_lastInstructionAddress;
+            lastRegisters = engine->impl->_registers;
+            current       = engine->read( address, size );
+            
+            if( current.size() == 0 )
+            {
+                throw std::runtime_error( "Fatal internal error: cannot read current instruction" );
+            }
+            
+            engine->impl->_lastInstruction        = current;
+            engine->impl->_lastInstructionAddress = address;
+            engine->impl->_registers              = *( engine );
+        }
+        
+        if( last.size() > 0 )
+        {
+            for( const auto & f: after )
+            {
+                f( lastAddress, lastRegisters, last );
+            }
+        }
+        
+        for( const auto & f: before )
+        {
+            f( address, current );
+        }
+    }
+    
+    bool Engine::IMPL::_handleInvalidMemoryAccess( uc_engine * uc, uc_mem_type type, uint64_t address, int size, int64_t value, void * data )
+    {
+        Engine                                                 * engine;
+        std::vector< std::function< void( uint64_t, size_t ) > > handlers;
+        
+        ( void )uc;
+        ( void )type;
+        ( void )value;
+        
+        engine = static_cast< Engine * >( data );
+        
+        if( engine == nullptr )
+        {
+            throw std::runtime_error( "Fatal internal error: unknown engine" );
+        }
+        
+        {
+            std::lock_guard< std::recursive_mutex > l( engine->impl->_rmtx );
+            
+            handlers = engine->impl->_invalidMemoryHandlers;
+        }
+        
+        for( const auto & f: handlers )
+        {
+            f( address, numeric_cast< size_t >( size ) );
+        }
+        
+        return false;
+    }
+    
+    void Engine::IMPL::_handleValidMemoryAccess( uc_engine * uc, uc_mem_type type, uint64_t address, int size, int64_t value, void * data )
+    {
+        Engine                                                 * engine;
+        std::vector< std::function< void( uint64_t, size_t ) > > handlers;
+        
+        ( void )uc;
+        ( void )type;
+        ( void )value;
+        
+        engine = static_cast< Engine * >( data );
+        
+        if( engine == nullptr )
+        {
+            throw std::runtime_error( "Fatal internal error: unknown engine" );
+        }
+        
+        {
+            std::lock_guard< std::recursive_mutex > l( engine->impl->_rmtx );
+            
+            handlers = engine->impl->_validMemoryHandlers;
+        }
+        
+        for( const auto & f: handlers )
+        {
+            f( address, numeric_cast< size_t >( size ) );
+        }
+    }
+    
     std::vector< uint8_t > Engine::IMPL::_read( size_t address, size_t size )
     {
         uc_err                                  e;
         std::lock_guard< std::recursive_mutex > l( this->_rmtx );
+        
+        if( size == 0 )
+        {
+            return {};
+        }
         
         if( address + size >= this->_memory )
         {
@@ -546,17 +889,22 @@ namespace UB
         }
     }
     
-    void Engine::IMPL::_write( size_t address, const std::vector< uint8_t > & bytes )
+    void Engine::IMPL::_write( size_t address, const uint8_t * bytes, size_t size )
     {
         uc_err                                  e;
         std::lock_guard< std::recursive_mutex > l( this->_rmtx );
+        
+        if( size == 0 )
+        {
+            return;
+        }
         
         if( address >= this->_memory )
         {
             throw std::runtime_error( "Cannot write to address " + String::toHex( address ) + " - Not enough memory allocated" );
         }
         
-        if( ( e = uc_mem_write( this->_uc, address, &( bytes[ 0 ] ), bytes.size() ) ) != UC_ERR_OK )
+        if( ( e = uc_mem_write( this->_uc, address, bytes, size ) ) != UC_ERR_OK )
         {
             throw std::runtime_error( uc_strerror( e ) );
         }

@@ -28,6 +28,7 @@
 #include <memory>
 #include <algorithm>
 #include "UB/FAT/Image.hpp"
+#include "UB/BIOS/MemoryMap.hpp"
 #include "UB/UI.hpp"
 
 namespace UB
@@ -36,21 +37,34 @@ namespace UB
     {
         public:
             
-            Machine( size_t memory, const FAT::Image & fat );
+            Machine( size_t memory, const FAT::Image & fat, UI::Mode mode );
             Machine( const Machine & o );
             Machine( Machine && o ) noexcept;
             ~Machine( void );
             
             Machine & operator =( Machine o );
             
-            const FAT::Image & bootImage( void ) const;
+            const FAT::Image      & bootImage( void ) const;
+            const BIOS::MemoryMap & memoryMap( void ) const;
             
             UI & ui( void ) const;
             
             void run( void );
             
-            bool breakOnInterrupts( void ) const;
-            void breakOnInterrupts( bool value );
+            bool breakOnInterrupt( void )       const;
+            bool breakOnInterruptReturn( void ) const;
+            bool trap( void )                   const;
+            bool debugVideo( void )             const;
+            bool singleStep( void )             const;
+            
+            void breakOnInterrupt( bool value );
+            void breakOnInterruptReturn( bool value );
+            void trap( bool value );
+            void debugVideo( bool value );
+            void singleStep( bool value );
+            
+            void addBreakpoint(    uint64_t address );
+            void removeBreakpoint( uint64_t address );
             
             friend void swap( Machine & o1, Machine & o2 );
             

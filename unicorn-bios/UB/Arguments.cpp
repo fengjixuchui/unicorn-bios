@@ -24,7 +24,6 @@
 
 #include "UB/Arguments.hpp"
 #include "UB/Casts.hpp"
-#include <vector>
 
 namespace UB
 {
@@ -35,10 +34,17 @@ namespace UB
             IMPL( int argc, const char * argv[] );
             IMPL( const IMPL & o );
             
-            bool        _showHelp;
-            bool        _breakOnInterrupts;
-            size_t      _memory;
-            std::string _bootImage;
+            bool                    _showHelp;
+            bool                    _breakOnInterrupt;
+            bool                    _breakOnInterruptReturn;
+            bool                    _trap;
+            bool                    _debugVideo;
+            bool                    _singleStep;
+            bool                    _noUI;
+            bool                    _noColors;
+            size_t                  _memory;
+            std::string             _bootImage;
+            std::vector< uint64_t > _breakpoints;
     };
     
     Arguments::Arguments( int argc, const char * argv[] ):
@@ -68,9 +74,39 @@ namespace UB
         return this->impl->_showHelp;
     }
     
-    bool Arguments::breakOnInterrupts( void ) const
+    bool Arguments::breakOnInterrupt( void ) const
     {
-        return this->impl->_breakOnInterrupts;
+        return this->impl->_breakOnInterrupt;
+    }
+    
+    bool Arguments::breakOnInterruptReturn( void ) const
+    {
+        return this->impl->_breakOnInterruptReturn;
+    }
+    
+    bool Arguments::trap( void ) const
+    {
+        return this->impl->_trap;
+    }
+    
+    bool Arguments::debugVideo( void ) const
+    {
+        return this->impl->_debugVideo;
+    }
+    
+    bool Arguments::singleStep( void ) const
+    {
+        return this->impl->_singleStep;
+    }
+    
+    bool Arguments::noUI( void ) const
+    {
+        return this->impl->_noUI;
+    }
+    
+    bool Arguments::noColors( void ) const
+    {
+        return this->impl->_noColors;
     }
     
     size_t Arguments::memory( void ) const
@@ -83,6 +119,11 @@ namespace UB
         return this->impl->_bootImage;
     }
     
+    std::vector< uint64_t > Arguments::breakpoints( void ) const
+    {
+        return this->impl->_breakpoints;
+    }
+    
     void swap( Arguments & o1, Arguments & o2 )
     {
         using std::swap;
@@ -91,9 +132,15 @@ namespace UB
     }
     
     Arguments::IMPL::IMPL( int argc, const char * argv[] ):
-        _showHelp( false ),
-        _breakOnInterrupts( false ),
-        _memory( 0 )
+        _showHelp(               false ),
+        _breakOnInterrupt(       false ),
+        _breakOnInterruptReturn( false ),
+        _trap(                   false ),
+        _debugVideo(             false ),
+        _singleStep(             false ),
+        _noUI(                   false ),
+        _noColors(               false ),
+        _memory(                 0 )
     {
         if( argc < 1 )
         {
@@ -108,9 +155,33 @@ namespace UB
             {
                 this->_showHelp = true;
             }
-            if( arg == "--int-break" )
+            else if( arg == "--break-int" )
             {
-                this->_breakOnInterrupts = true;
+                this->_breakOnInterrupt = true;
+            }
+            else if( arg == "--break-iret" )
+            {
+                this->_breakOnInterruptReturn = true;
+            }
+            else if( arg == "--trap" )
+            {
+                this->_trap = true;
+            }
+            else if( arg == "--debug-video" )
+            {
+                this->_debugVideo = true;
+            }
+            else if( arg == "--single-step" )
+            {
+                this->_singleStep = true;
+            }
+            else if( arg == "--no-ui" )
+            {
+                this->_noUI = true;
+            }
+            else if( arg == "--no-colors" )
+            {
+                this->_noColors = true;
             }
             else if( arg == "--memory" || arg == "-m" )
             {
@@ -124,6 +195,18 @@ namespace UB
                     {}
                 }
             }
+            else if( arg == "--break" || arg == "-b" )
+            {
+                if( ++i < argc )
+                {
+                    try
+                    {
+                        this->_breakpoints.push_back( static_cast< uint64_t >( std::strtoull( argv[ i ], 0, 16 ) ) );
+                    }
+                    catch( ... )
+                    {}
+                }
+            }
             else if( this->_bootImage.length() == 0 )
             {
                 this->_bootImage = arg;
@@ -132,9 +215,16 @@ namespace UB
     }
     
     Arguments::IMPL::IMPL( const IMPL & o ):
-        _showHelp(           o._showHelp ),
-        _breakOnInterrupts(  o._breakOnInterrupts ),
-        _memory(             o._memory ),
-        _bootImage(          o._bootImage )
+        _showHelp(                o._showHelp ),
+        _breakOnInterrupt(        o._breakOnInterrupt ),
+        _breakOnInterruptReturn(  o._breakOnInterruptReturn ),
+        _trap(                    o._trap ),
+        _debugVideo(              o._debugVideo ),
+        _singleStep(              o._singleStep ),
+        _noUI(                    o._noUI ),
+        _noColors(                o._noColors ),
+        _memory(                  o._memory ),
+        _bootImage(               o._bootImage ),
+        _breakpoints(             o._breakpoints )
     {}
 }

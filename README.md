@@ -14,7 +14,8 @@ unicorn-bios
 About
 -----
 
-Basic BIOS emulator for Unicorn Engine.
+Basic BIOS emulator/debugger for Unicorn Engine.  
+Written to debug the [XEOS Operating System](https://github.com/macmade/XEOS) boot sequence.
 
 ![Screenshot](Assets/Screen.png "Screenshot")
 
@@ -26,8 +27,15 @@ Basic BIOS emulator for Unicorn Engine.
         
         --help   / -h:  Displays help.
         --memory / -m:  The amount of memory to allocate for the virtual machine
-                        (in megabytes). Defaults to 64.
-        --int-break:    Breaks on interrupt calls.
+                        (in megabytes). Defaults to 64MB, minimum 2MB.
+        --break / -b    Breaks on a specific address.
+        --break-int:    Breaks on interrupt calls.
+        --break-iret:   Breaks on interrupt returns.
+        --trap:         Raises a trap when breaking.
+        --debug-video:  Turns on debug output for video services.
+        --single-step:  Breaks on every instruction.
+        --no-ui:        Don't start the user interface (output will be displayed to stdout, debug info to stderr).
+        --no-colors:    Don't use colors.
 
 ### Installation:
 

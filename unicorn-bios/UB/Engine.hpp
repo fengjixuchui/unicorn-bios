@@ -30,12 +30,15 @@
 #include <cstdint>
 #include <vector>
 #include <functional>
+#include "UB/Registers.hpp"
 
 namespace UB
 {
     class Engine
     {
         public:
+            
+            static uint64_t getAddress( uint16_t segment, uint16_t offset );
             
             Engine( size_t memory );
             ~Engine( void );
@@ -58,19 +61,31 @@ namespace UB
             uint8_t dh( void ) const;
             uint8_t dl( void ) const;
             
-            uint16_t ax( void )     const;
-            uint16_t bx( void )     const;
-            uint16_t cx( void )     const;
-            uint16_t dx( void )     const;
-            uint16_t si( void )     const;
-            uint16_t di( void )     const;
-            uint16_t sp( void )     const;
-            uint16_t bp( void )     const;
-            uint16_t cs( void )     const;
-            uint16_t ds( void )     const;
-            uint16_t es( void )     const;
-            uint16_t ss( void )     const;
-            uint16_t ip( void )     const;
+            uint16_t ax( void ) const;
+            uint16_t bx( void ) const;
+            uint16_t cx( void ) const;
+            uint16_t dx( void ) const;
+            uint16_t si( void ) const;
+            uint16_t di( void ) const;
+            uint16_t sp( void ) const;
+            uint16_t bp( void ) const;
+            uint16_t cs( void ) const;
+            uint16_t ds( void ) const;
+            uint16_t ss( void ) const;
+            uint16_t es( void ) const;
+            uint16_t fs( void ) const;
+            uint16_t gs( void ) const;
+            uint16_t ip( void ) const;
+            
+            uint32_t eax( void )    const;
+            uint32_t ebx( void )    const;
+            uint32_t ecx( void )    const;
+            uint32_t edx( void )    const;
+            uint32_t esi( void )    const;
+            uint32_t edi( void )    const;
+            uint32_t esp( void )    const;
+            uint32_t ebp( void )    const;
+            uint32_t eip( void )    const;
             uint32_t eflags( void ) const;
             
             void cf( bool value );
@@ -94,19 +109,39 @@ namespace UB
             void bp( uint16_t value );
             void cs( uint16_t value );
             void ds( uint16_t value );
-            void es( uint16_t value );
             void ss( uint16_t value );
+            void es( uint16_t value );
+            void fs( uint16_t value );
+            void gs( uint16_t value );
             void ip( uint16_t value );
+            
+            void eax( uint32_t value );
+            void ebx( uint32_t value );
+            void ecx( uint32_t value );
+            void edx( uint32_t value );
+            void esi( uint32_t value );
+            void edi( uint32_t value );
+            void esp( uint32_t value );
+            void ebp( uint32_t value );
+            void eip( uint32_t value );
             void eflags( uint32_t value );
+            
+            Registers registers( void ) const;
             
             bool running( void ) const;
             
-            void onStart(     const std::function< void( void ) > f );
-            void onStop(      const std::function< void( void ) > f );
-            void onInterrupt( const std::function< bool( uint32_t i, Engine & ) > handler );
+            void onStart(               const std::function< void( void ) > f );
+            void onStop(                const std::function< void( void ) > f );
+            void onInterrupt(           const std::function< bool( uint32_t ) > handler );
+            void onException(           const std::function< bool( const std::exception & ) > handler );
+            void onInvalidMemoryAccess( const std::function< void( uint64_t, size_t ) > handler );
+            void onValidMemoryAccess(   const std::function< void( uint64_t, size_t ) > handler );
+            void beforeInstruction(     const std::function< void( uint64_t, const std::vector< uint8_t > & ) > handler );
+            void afterInstruction(      const std::function< void( uint64_t, const Registers &, const std::vector< uint8_t > & ) > handler );
             
             std::vector< uint8_t > read( size_t address, size_t size );
             void                   write( size_t address, const std::vector< uint8_t > & bytes );
+            void                   write( size_t address, const uint8_t * bytes, size_t size );
             
             bool start( size_t address );
             void stop( void );

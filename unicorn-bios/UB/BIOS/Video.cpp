@@ -25,6 +25,7 @@
 #include "UB/BIOS/Video.hpp"
 #include "UB/Machine.hpp"
 #include "UB/Engine.hpp"
+#include "UB/String.hpp"
 #include <cctype>
 
 namespace UB
@@ -33,11 +34,31 @@ namespace UB
     {
         namespace Video
         {
-            void ttyOutput( const Machine & machine, Engine & engine )
+            bool setCursorPosition( const Machine & machine, Engine & engine )
+            {
+                if( machine.debugVideo() )
+                {
+                    machine.ui().debug() << "Setting cursor position:"
+                                         << std::endl
+                                         << "    - Page:   " << std::to_string( static_cast< unsigned int >( engine.bh() ) )
+                                         << std::endl
+                                         << "    - Row:    " << std::to_string( static_cast< unsigned int >( engine.dh() ) )
+                                         << std::endl
+                                         << "    - Column: " << std::to_string( static_cast< unsigned int >( engine.dl() ) )
+                                         << std::endl;
+                }
+                
+                return true;
+            }
+            
+            bool ttyOutput( const Machine & machine, Engine & engine )
             {
                 char c( static_cast< char >( engine.al() ) );
                 
-                ( void )machine;
+                if( machine.debugVideo() )
+                {
+                    machine.ui().debug() << "TTY output: " << String::toHex( engine.al() ) << std::endl;
+                }
                 
                 if( std::isprint( c ) || std::isspace( c ) )
                 {
@@ -47,6 +68,62 @@ namespace UB
                 {
                     machine.ui().output() << ".";
                 }
+                
+                return true;
+            }
+            
+            bool palette( const Machine & machine, Engine & engine )
+            {
+                if( engine.al() == 0x10 )
+                {
+                    if( machine.debugVideo() )
+                    {
+                        machine.ui().debug() << "Setting DAC color: " << String::toHex( engine.bx() )
+                                             << std::endl
+                                             << "    - R: " << String::toHex( engine.dh() )
+                                             << std::endl
+                                             << "    - G: " << String::toHex( engine.ch() )
+                                             << std::endl
+                                             << "    - B: " << String::toHex( engine.cl() )
+                                             << std::endl;
+                    }
+                    
+                    return true;
+                }
+                
+                return false;
+            }
+            
+            bool writeCharacterAndAttributeAtCursor( const Machine & machine, Engine & engine )
+            {
+                if( machine.debugVideo() )
+                {
+                    machine.ui().debug() << "Writing character: " << String::toHex( engine.al() )
+                                         << std::endl
+                                         << "    - Page:  " << std::to_string( static_cast< unsigned int >( engine.bh() ) )
+                                         << std::endl
+                                         << "    - Color: " << String::toHex( engine.bl() )
+                                         << std::endl
+                                         << "    - Times: "<< std::to_string( static_cast< unsigned int >( engine.cx() ) )
+                                         << std::endl;
+                }
+                
+                return true;
+            }
+            
+            bool writeCharacterOnlyAtCursor( const Machine & machine, Engine & engine )
+            {
+                if( machine.debugVideo() )
+                {
+                    machine.ui().debug() << "Writing character: " << String::toHex( engine.al() )
+                                         << std::endl
+                                         << "    - Page:  " << std::to_string( static_cast< unsigned int >( engine.bh() ) )
+                                         << std::endl
+                                         << "    - Times: "<< std::to_string( static_cast< unsigned int >( engine.cx() ) )
+                                         << std::endl;
+                }
+                
+                return true;
             }
         }
     }

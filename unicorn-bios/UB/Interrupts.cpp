@@ -28,6 +28,7 @@
 #include "UB/BIOS/Video.hpp"
 #include "UB/BIOS/Disk.hpp"
 #include "UB/BIOS/Keyboard.hpp"
+#include "UB/BIOS/SystemServices.hpp"
 
 namespace UB
 {
@@ -45,7 +46,11 @@ namespace UB
         {
             switch( engine.ah() )
             {
-                case 0x0E: BIOS::Video::ttyOutput( machine, engine ); return true;
+                case 0x02: return BIOS::Video::setCursorPosition( machine, engine );
+                case 0x09: return BIOS::Video::writeCharacterAndAttributeAtCursor( machine, engine );
+                case 0x0A: return BIOS::Video::writeCharacterOnlyAtCursor( machine, engine );
+                case 0x0E: return BIOS::Video::ttyOutput( machine, engine );
+                case 0x10: return BIOS::Video::palette( machine, engine );
                 default:   break;
             }
             
@@ -72,8 +77,8 @@ namespace UB
         {
             switch( engine.ah() )
             {
-                case 0x00: BIOS::Disk::reset( machine, engine );       return true;
-                case 0x02: BIOS::Disk::readSectors( machine, engine ); return true;
+                case 0x00: return BIOS::Disk::reset( machine, engine );
+                case 0x02: return BIOS::Disk::readSectors( machine, engine );
                 default:   break;
             }
             
@@ -90,8 +95,11 @@ namespace UB
         
         bool int0x15( const Machine & machine, Engine & engine )
         {
-            ( void )machine;
-            ( void )engine;
+            switch( engine.ax() )
+            {
+                case 0xE820: return BIOS::SystemServices::getMemoryMap( machine, engine );
+                default:     break;
+            }
             
             return false;
         }
@@ -100,7 +108,7 @@ namespace UB
         {
             switch( engine.ah() )
             {
-                case 0x00: BIOS::Keyboard::readKey( machine, engine ); return true;
+                case 0x00: return BIOS::Keyboard::readKey( machine, engine );
                 default:   break;
             }
             

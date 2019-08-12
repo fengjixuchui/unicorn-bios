@@ -27,6 +27,7 @@
 #include "UB/Engine.hpp"
 #include "UB/String.hpp"
 #include "UB/Casts.hpp"
+#include "UB/FAT/Functions.hpp"
 
 namespace UB
 {
@@ -34,22 +35,25 @@ namespace UB
     {
         namespace Disk
         {
-            void reset( const Machine & machine, Engine & engine )
+            bool reset( const Machine & machine, Engine & engine )
             {
                 machine.ui().debug() << "Resetting drive " << String::toHex( engine.dl() ) << std::endl;
                 
                 engine.cf( false );
                 engine.ah( 0 );
+                
+                return true;
             }
             
-            void readSectors( const Machine & machine, Engine & engine )
+            bool readSectors( const Machine & machine, Engine & engine )
             {
-                uint8_t  driveNumber( engine.dl() );
-                uint8_t  sectors(     engine.al() );
-                uint8_t  cylinder(    engine.ch() );
-                uint8_t  sector(      engine.cl() );
-                uint8_t  head(        engine.dh() );
-                uint64_t address(     0 );
+                uint8_t    driveNumber( engine.dl() );
+                uint8_t    sectors(     engine.al() );
+                uint8_t    cylinder(    engine.ch() );
+                uint8_t    sector(      engine.cl() );
+                uint8_t    head(        engine.dh() );
+                uint64_t   destination( Engine::getAddress( engine.es(), engine.bx() ) );
+                FAT::Image image(       machine.bootImage() );
                 
                 if( driveNumber != 0x00 )
                 {
@@ -58,38 +62,21 @@ namespace UB
                     goto error;
                 }
                 
-                address   = engine.es();
-                address <<= 4;
-                address  += engine.bx();
+                machine.ui().debug() << "Reading " << static_cast< unsigned int >( sectors ) << " sector" << ( ( sectors > 1 ) ? "s" : "" ) << " from drive " << String::toHex( driveNumber )
+                                     << std::endl
+                                     << "    - Cylinder:    " << String::toHex( cylinder )
+                                     << std::endl
+                                     << "    - Head:        " << String::toHex( head )
+                                     << std::endl
+                                     << "    - Sector:      " << String::toHex( sector )
+                                     << std::endl
+                                     << "    - LBA:         " << String::toHex( FAT::chsToLBA( image.mbr(), cylinder, sector, head ) )
+                                     << std::endl
+                                     << "    - Destination: " << String::toHex( destination ) << " (" << String::toHex( engine.es() ) << ":" << String::toHex( engine.bx() ) << ")"
+                                     << std::endl;
                 
                 {
-                    uint64_t           lba( 0 );
-                    const FAT::Image & img( machine.bootImage() );
-                    uint16_t           hpc( img.mbr().headsPerCylinder() );
-                    uint16_t           spt( img.mbr().sectorsPerTrack() );
-                    
-                    lba = ( ( ( numeric_cast< uint64_t >( cylinder ) * numeric_cast< uint64_t >( hpc ) ) + numeric_cast< uint64_t >( head ) ) * numeric_cast< uint64_t >( spt ) ) + ( numeric_cast< uint64_t >( sector ) - 1 );
-                    
-                    machine.ui().debug() << "Reading " << static_cast< unsigned int >( sectors ) << " sector" << ( ( sectors > 1 ) ? "s" : "" ) << " from drive " << String::toHex( driveNumber )
-                                         << std::endl
-                                         << "  - Cylinder:    " << String::toHex( cylinder )
-                                         << std::endl
-                                         << "  - Head:        " << String::toHex( head )
-                                         << std::endl
-                                         << "  - Sector:      " << String::toHex( sector )
-                                         << std::endl
-                                         << "  - LBA:         " << String::toHex( lba )
-                                         << std::endl
-                                         << "  - Destination: " << String::toHex( address ) << " (" << String::toHex( engine.es() ) << ":" << String::toHex( engine.bx() ) << ")"
-                                         << std::endl;
-                                         
-                                         std::stringstream ss;
-                                         ss << img.mbr();
-                                         machine.ui().debug() << ss.str();
-                }
-                
-                {
-                    std::vector< uint8_t > bytes( machine.bootImage().read( sectors, cylinder, sector, head ) );
+                    std::vector< uint8_t > bytes( image.read( cylinder, head, sector, sectors ) );
                     
                     if( bytes.size() == 0 )
                     {
@@ -98,24 +85,30 @@ namespace UB
                         goto error;
                     }
                     
-                    machine.ui().debug() << "[ SUCCESS ]> Writing " << bytes.size() << " to memory" << std::endl;
+                    engine.write( destination, bytes );
                     
-                    memcpy( reinterpret_cast< void * >( address ), &( bytes[ 0 ] ), bytes.size() );
+                    machine.ui().debug() << "[ SUCCESS ]> Wrote "
+                                         << bytes.size()
+                                         << " bytes at "
+                                         << String::toHex( destination )
+                                         << " -> "
+                                         << String::toHex( destination + bytes.size() )
+                                         << std::endl;
                     
-                    {
-                        engine.cf( false );
-                        engine.ah( 0 );
-                        engine.al( sectors );
-                    }
+                    engine.cf( false );
+                    engine.ah( 0 );
+                    engine.al( sectors );
+                    
+                    return true;
                 }
                 
                 error:
                     
-                    {
-                        engine.cf( true );
-                        engine.ah( 1 );
-                        engine.al( 0 );
-                    }
+                    engine.cf( true );
+                    engine.ah( 1 );
+                    engine.al( 0 );
+                    
+                    return true;
             }
         }
     }

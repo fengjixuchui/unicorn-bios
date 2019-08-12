@@ -25,6 +25,7 @@
 #include <iostream>
 #include "UB/Arguments.hpp"
 #include "UB/Machine.hpp"
+#include "UB/Screen.hpp"
 
 static void showHelp( void );
 
@@ -42,10 +43,35 @@ int main( int argc, const char * argv[] )
         }
         
         {
-            UB::Machine machine( args.memory() * 1024 * 1024, args.bootImage() );
+            UB::Machine * machine;
             
-            machine.breakOnInterrupts( args.breakOnInterrupts() );
-            machine.run();
+            if( args.noUI() )
+            {
+                machine = new UB::Machine( args.memory() * 1024 * 1024, args.bootImage(), UB::UI::Mode::Standard );
+            }
+            else
+            {
+                machine = new UB::Machine( args.memory() * 1024 * 1024, args.bootImage(), UB::UI::Mode::Interactive );
+            }
+            
+            machine->breakOnInterrupt( args.breakOnInterrupt() );
+            machine->breakOnInterruptReturn( args.breakOnInterruptReturn() );
+            machine->trap( args.trap() );
+            machine->debugVideo( args.debugVideo() );
+            machine->singleStep( args.singleStep() );
+            
+            for( auto bp: args.breakpoints() )
+            {
+                machine->addBreakpoint( bp );
+            }
+            
+            if( args.noUI() == false && args.noColors() )
+            {
+               UB::Screen::shared().disableColors();
+            }
+            
+            
+            machine->run();
         }
         
         return EXIT_SUCCESS;
@@ -76,8 +102,22 @@ static void showHelp( void )
               << std::endl
               << "    --memory / -m:  The amount of memory to allocate for the virtual machine"
               << std::endl
-              << "                    (in megabytes). Defaults to 64."
+              << "                    (in megabytes). Defaults to 64MB, minimum 2MB."
               << std::endl
-              << "    --int-break:    Breaks on interrupt calls."
+              << "    --break / -b    Breaks on a specific address."
+              << std::endl
+              << "    --break-int:    Breaks on interrupt calls."
+              << std::endl
+              << "    --break-iret:   Breaks on interrupt returns."
+              << std::endl
+              << "    --trap:         Raises a trap when breaking."
+              << std::endl
+              << "    --debug-video:  Turns on debug output for video services."
+              << std::endl
+              << "    --single-step:  Breaks on every instruction."
+              << std::endl
+              << "    --no-ui:        Don't start the user interface (output will be displayed to stdout, debug info to stderr)."
+              << std::endl
+              << "    --no-colors:    Don't use colors."
               << std::endl;
 }
